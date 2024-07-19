@@ -1,0 +1,44 @@
+name: fim
+channels:
+  - xformers
+  - pytorch
+  - nvidia/label/cuda-12.1.0
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip
+  - pytorch
+  - torchvision
+  - torchaudio
+  - pytorch-cuda=12.1
+  - cuda
+  - xformers
+  - torchtriton
+  - lightning
+  - gradio
+  - huggingface_hub
+  - einops
+  - omegaconf
+  - torchmetrics
+  - accelerate
+  - tensorboard
+  - webdataset
+  - pymcubes
+  - trimesh
+  - rembg
+  - transformers
+  - diffusers
+  - bitsandbytes
+  - imageio-ffmpeg
+  - plyfile
+  - ninja
+  - ipykernel
+  - ipywidgets
+  - anaconda::cudnn
+  - gcc
+  - gxx
+  - kornia
+  - pip:
+    - xatlas
+    - git+https://github.com/NVlabs/nvdiffrast/

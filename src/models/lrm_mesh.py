@@ -342,6 +342,7 @@ class InstantMesh(nn.Module):
         planes: torch.Tensor, 
         use_texture_map: bool = False,
         texture_resolution: int = 1024,
+        freeplanes: None | torch.Tensor = None,
         **kwargs,
     ):
         '''
@@ -354,7 +355,7 @@ class InstantMesh(nn.Module):
         device = planes.device
 
         # predict geometry first
-        mesh_v, mesh_f, sdf, deformation, v_deformed, sdf_reg_loss = self.get_geometry_prediction(planes)
+        mesh_v, mesh_f, sdf, deformation, v_deformed, sdf_reg_loss = self.get_geometry_prediction(freeplanes if freeplanes is not None else planes)
         vertices, faces = mesh_v[0], mesh_f[0]
 
         if not use_texture_map:

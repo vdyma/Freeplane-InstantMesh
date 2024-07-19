@@ -1,8 +1,14 @@
 <div align="center">
   
-# InstantMesh: Efficient 3D Mesh Generation from a Single Image with Sparse-view Large Reconstruction Models
+# *Freeplane* InstantMesh: Efficient 3D Mesh Generation from a Single Image with Sparse-view Large Reconstruction Models and *Frequency Modulated Triplane*
+
+</div>
+<div align="center">
+
+The following badges are mostly from the original README, except for the second Arxiv paper badge which points to the paper: "*Freeplane: Unlocking Free Lunch in Triplane-Based Sparse-View Reconstruction Models*".
 
 <a href="https://arxiv.org/abs/2404.07191"><img src="https://img.shields.io/badge/ArXiv-2404.07191-brightgreen"></a> 
+<a href="https://arxiv.org/abs/2406.00750"><img src="https://img.shields.io/badge/ArXiv-2406.00750-brightgreen"></a> 
 <a href="https://huggingface.co/TencentARC/InstantMesh"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20Model_Card-Huggingface-orange"></a> 
 <a href="https://huggingface.co/spaces/TencentARC/InstantMesh"><img src="https://img.shields.io/badge/%F0%9F%A4%97%20Gradio%20Demo-Huggingface-orange"></a> <br>
 <a href="https://replicate.com/camenduru/instantmesh"><img src="https://img.shields.io/badge/Demo-Replicate-blue"></a>
@@ -10,6 +16,59 @@
 <a href="https://github.com/jtydhr88/ComfyUI-InstantMesh"><img src="https://img.shields.io/badge/Demo-ComfyUI-8A2BE2"></a>
 
 </div>
+
+---
+
+## Overview
+
+This repo is a fork of the official InstantMesh with added [**Fre**quency modulat**e**d tri**plane**](https://freeplane3d.github.io/) technique to improve quality of the output meshes during inference time. Using this technique the resulting meshes are less noisy and smooth.
+
+The idea is to apply Bilateral Filtering to the triplane in order to remove high-frequency components such as highly detailed conflicts or scattered noises. Since the filtering is applied during inference time, there is no need to retrain the model to use this technique.
+
+Freeplane can be applied not only to InstantMesh, but to any triplane-based model, e.g. [CRM](https://ml.cs.tsinghua.edu.cn/~zhengyi/CRM/).
+
+![Generated meshes comparison](assets/freeplane-results.png)
+
+## Install
+
+1. Install [conda](https://conda.io/projects/conda/en/latest/user-guide/install/index.html) or [miniforge](https://conda-forge.org/miniforge/) (recommended).
+
+2. Clone this repository and open Anaconda shell in the root directory of the repository.
+
+3. Install the environment using the following command:
+
+```bash
+conda env create -f environment.yaml
+```
+
+4. Activate the environment:
+
+```bash
+conda activate fim
+```
+
+## Usage
+
+There are two ways to use this project:
+
+1. (Basic) Using command line, you can run the `run.py` script as follows:
+
+```bash
+python run.py <PATH-TO-CONFIG> <INPUT-FILE-OR-DIRECTORY>
+```
+
+`<PATH-TO-CONFIG>` is a path to one of the files in the `configs` directory. `<INPUT-FILE-OR-DIRECTORY>` is a path to an image file or directory of images, e.g. files in `examples` directory.
+
+To learn about additional arguments, run:
+
+```bash
+python run.py -h
+```
+
+2. (Advanced) Use Jupyter notebook `inference.ipynb` to run the model. You can modify the variables and configurations along the way.
+
+
+**Below is the original README. You can use it for additional info about InstantMesh model**
 
 ---
 

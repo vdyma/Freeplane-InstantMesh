@@ -11,6 +11,7 @@ from einops import rearrange, repeat
 from tqdm import tqdm
 from huggingface_hub import hf_hub_download
 from diffusers import DiffusionPipeline, EulerAncestralDiscreteScheduler
+from kornia.filters import bilateral_blur
 
 from src.utils.train_util import instantiate_from_config
 from src.utils.camera_util import (
@@ -62,201 +63,212 @@ def render_frames(model, planes, render_cameras, render_size=512, chunk_size=1, 
     return frames
 
 
-###############################################################################
-# Arguments.
-###############################################################################
+if __name__ == "__main__":
+    ###############################################################################
+    # Arguments.
+    ###############################################################################
 
-parser = argparse.ArgumentParser()
-parser.add_argument('config', type=str, help='Path to config file.')
-parser.add_argument('input_path', type=str, help='Path to input image or directory.')
-parser.add_argument('--output_path', type=str, default='outputs/', help='Output directory.')
-parser.add_argument('--diffusion_steps', type=int, default=75, help='Denoising Sampling steps.')
-parser.add_argument('--seed', type=int, default=42, help='Random seed for sampling.')
-parser.add_argument('--scale', type=float, default=1.0, help='Scale of generated object.')
-parser.add_argument('--distance', type=float, default=4.5, help='Render distance.')
-parser.add_argument('--view', type=int, default=6, choices=[4, 6], help='Number of input views.')
-parser.add_argument('--no_rembg', action='store_true', help='Do not remove input background.')
-parser.add_argument('--export_texmap', action='store_true', help='Export a mesh with texture map.')
-parser.add_argument('--save_video', action='store_true', help='Save a circular-view video.')
-args = parser.parse_args()
-seed_everything(args.seed)
+    parser = argparse.ArgumentParser()
+    parser.add_argument('config', type=str, help='Path to config file.')
+    parser.add_argument('input_path', type=str, help='Path to input image or directory.')
+    parser.add_argument('--output_path', type=str, default='outputs/', help='Output directory.')
+    parser.add_argument('--diffusion_steps', type=int, default=75, help='Denoising Sampling steps.')
+    parser.add_argument('--seed', type=int, default=42, help='Random seed for sampling.')
+    parser.add_argument('--scale', type=float, default=1.0, help='Scale of generated object.')
+    parser.add_argument('--distance', type=float, default=4.5, help='Render distance.')
+    parser.add_argument('--view', type=int, default=6, choices=[4, 6], help='Number of input views.')
+    parser.add_argument('--no_rembg', action='store_true', help='Do not remove input background.')
+    parser.add_argument('--export_texmap', action='store_true', help='Export a mesh with texture map.')
+    parser.add_argument('--save_video', action='store_true', help='Save a circular-view video.')
+    args = parser.parse_args()
+    seed_everything(args.seed)
 
-###############################################################################
-# Stage 0: Configuration.
-###############################################################################
+    ###############################################################################
+    # Stage 0: Configuration.
+    ###############################################################################
 
-config = OmegaConf.load(args.config)
-config_name = os.path.basename(args.config).replace('.yaml', '')
-model_config = config.model_config
-infer_config = config.infer_config
+    config = OmegaConf.load(args.config)
+    config_name = os.path.basename(args.config).replace('.yaml', '')
+    model_config = config.model_config
+    infer_config = config.infer_config
 
-IS_FLEXICUBES = True if config_name.startswith('instant-mesh') else False
+    IS_FLEXICUBES = True if config_name.startswith('instant-mesh') else False
 
-device = torch.device('cuda')
+    device = torch.device('cuda')
 
-# load diffusion model
-print('Loading diffusion model ...')
-pipeline = DiffusionPipeline.from_pretrained(
-    "sudo-ai/zero123plus-v1.2", 
-    custom_pipeline="zero123plus",
-    torch_dtype=torch.float16,
-)
-pipeline.scheduler = EulerAncestralDiscreteScheduler.from_config(
-    pipeline.scheduler.config, timestep_spacing='trailing'
-)
+    # load diffusion model
+    print('Loading diffusion model ...')
+    pipeline = DiffusionPipeline.from_pretrained(
+        "sudo-ai/zero123plus-v1.2", 
+        custom_pipeline="zero123plus",
+        torch_dtype=torch.float16,
+    )
+    pipeline.scheduler = EulerAncestralDiscreteScheduler.from_config(
+        pipeline.scheduler.config, timestep_spacing='trailing'
+    )
 
-# load custom white-background UNet
-print('Loading custom white-background unet ...')
-if os.path.exists(infer_config.unet_path):
-    unet_ckpt_path = infer_config.unet_path
-else:
-    unet_ckpt_path = hf_hub_download(repo_id="TencentARC/InstantMesh", filename="diffusion_pytorch_model.bin", repo_type="model")
-state_dict = torch.load(unet_ckpt_path, map_location='cpu')
-pipeline.unet.load_state_dict(state_dict, strict=True)
+    # load custom white-background UNet
+    print('Loading custom white-background unet ...')
+    if os.path.exists(infer_config.unet_path):
+        unet_ckpt_path = infer_config.unet_path
+    else:
+        unet_ckpt_path = hf_hub_download(repo_id="TencentARC/InstantMesh", filename="diffusion_pytorch_model.bin", repo_type="model")
+    state_dict = torch.load(unet_ckpt_path, map_location='cpu')
+    pipeline.unet.load_state_dict(state_dict, strict=True)
 
-pipeline = pipeline.to(device)
+    pipeline = pipeline.to(device)
 
-# load reconstruction model
-print('Loading reconstruction model ...')
-model = instantiate_from_config(model_config)
-if os.path.exists(infer_config.model_path):
-    model_ckpt_path = infer_config.model_path
-else:
-    model_ckpt_path = hf_hub_download(repo_id="TencentARC/InstantMesh", filename=f"{config_name.replace('-', '_')}.ckpt", repo_type="model")
-state_dict = torch.load(model_ckpt_path, map_location='cpu')['state_dict']
-state_dict = {k[14:]: v for k, v in state_dict.items() if k.startswith('lrm_generator.')}
-model.load_state_dict(state_dict, strict=True)
+    # load reconstruction model
+    print('Loading reconstruction model ...')
+    model = instantiate_from_config(model_config)
+    if os.path.exists(infer_config.model_path):
+        model_ckpt_path = infer_config.model_path
+    else:
+        model_ckpt_path = hf_hub_download(repo_id="TencentARC/InstantMesh", filename=f"{config_name.replace('-', '_')}.ckpt", repo_type="model")
+    state_dict = torch.load(model_ckpt_path, map_location='cpu')['state_dict']
+    state_dict = {k[14:]: v for k, v in state_dict.items() if k.startswith('lrm_generator.')}
+    model.load_state_dict(state_dict, strict=True)
 
-model = model.to(device)
-if IS_FLEXICUBES:
-    model.init_flexicubes_geometry(device, fovy=30.0)
-model = model.eval()
+    model = model.to(device)
+    if IS_FLEXICUBES:
+        model.init_flexicubes_geometry(device, fovy=30.0)
+    model = model.eval()
 
-# make output directories
-image_path = os.path.join(args.output_path, config_name, 'images')
-mesh_path = os.path.join(args.output_path, config_name, 'meshes')
-video_path = os.path.join(args.output_path, config_name, 'videos')
-os.makedirs(image_path, exist_ok=True)
-os.makedirs(mesh_path, exist_ok=True)
-os.makedirs(video_path, exist_ok=True)
+    # make output directories
+    image_path = os.path.join(args.output_path, config_name, 'images')
+    mesh_path = os.path.join(args.output_path, config_name, 'meshes')
+    video_path = os.path.join(args.output_path, config_name, 'videos')
+    os.makedirs(image_path, exist_ok=True)
+    os.makedirs(mesh_path, exist_ok=True)
+    os.makedirs(video_path, exist_ok=True)
 
-# process input files
-if os.path.isdir(args.input_path):
-    input_files = [
-        os.path.join(args.input_path, file) 
-        for file in os.listdir(args.input_path) 
-        if file.endswith('.png') or file.endswith('.jpg') or file.endswith('.webp')
-    ]
-else:
-    input_files = [args.input_path]
-print(f'Total number of input images: {len(input_files)}')
+    # process input files
+    if os.path.isdir(args.input_path):
+        input_files = [
+            os.path.join(args.input_path, file) 
+            for file in os.listdir(args.input_path) 
+            if file.endswith('.png') or file.endswith('.jpg') or file.endswith('.webp')
+        ]
+    else:
+        input_files = [args.input_path]
+    print(f'Total number of input images: {len(input_files)}')
 
 
-###############################################################################
-# Stage 1: Multiview generation.
-###############################################################################
+    ###############################################################################
+    # Stage 1: Multiview generation.
+    ###############################################################################
 
-rembg_session = None if args.no_rembg else rembg.new_session()
+    rembg_session = None if args.no_rembg else rembg.new_session()
 
-outputs = []
-for idx, image_file in enumerate(input_files):
-    name = os.path.basename(image_file).split('.')[0]
-    print(f'[{idx+1}/{len(input_files)}] Imagining {name} ...')
+    outputs = []
+    for idx, image_file in enumerate(input_files):
+        name = os.path.basename(image_file).split('.')[0]
+        print(f'[{idx+1}/{len(input_files)}] Imagining {name} ...')
 
-    # remove background optionally
-    input_image = Image.open(image_file)
-    if not args.no_rembg:
-        input_image = remove_background(input_image, rembg_session)
-        input_image = resize_foreground(input_image, 0.85)
-    
-    # sampling
-    output_image = pipeline(
-        input_image, 
-        num_inference_steps=args.diffusion_steps, 
-    ).images[0]
+        # remove background optionally
+        input_image = Image.open(image_file)
+        if not args.no_rembg:
+            input_image = remove_background(input_image, rembg_session)
+            input_image = resize_foreground(input_image, 0.85)
+        
+        # sampling
+        output_image = pipeline(
+            input_image, 
+            num_inference_steps=args.diffusion_steps, 
+        ).images[0]
 
-    output_image.save(os.path.join(image_path, f'{name}.png'))
-    print(f"Image saved to {os.path.join(image_path, f'{name}.png')}")
+        output_image.save(os.path.join(image_path, f'{name}.png'))
+        print(f"Image saved to {os.path.join(image_path, f'{name}.png')}")
 
-    images = np.asarray(output_image, dtype=np.float32) / 255.0
-    images = torch.from_numpy(images).permute(2, 0, 1).contiguous().float()     # (3, 960, 640)
-    images = rearrange(images, 'c (n h) (m w) -> (n m) c h w', n=3, m=2)        # (6, 3, 320, 320)
+        images = np.asarray(output_image, dtype=np.float32) / 255.0
+        images = torch.from_numpy(images).permute(2, 0, 1).contiguous().float()     # (3, 960, 640)
+        images = rearrange(images, 'c (n h) (m w) -> (n m) c h w', n=3, m=2)        # (6, 3, 320, 320)
 
-    outputs.append({'name': name, 'images': images})
+        outputs.append({'name': name, 'images': images})
 
-# delete pipeline to save memory
-del pipeline
+    # delete pipeline to save memory
+    del pipeline
 
-###############################################################################
-# Stage 2: Reconstruction.
-###############################################################################
+    ###############################################################################
+    # Stage 2: Reconstruction.
+    ###############################################################################
 
-input_cameras = get_zero123plus_input_cameras(batch_size=1, radius=4.0*args.scale).to(device)
-chunk_size = 20 if IS_FLEXICUBES else 1
+    input_cameras = get_zero123plus_input_cameras(batch_size=1, radius=4.0*args.scale).to(device)
+    chunk_size = 20 if IS_FLEXICUBES else 1
 
-for idx, sample in enumerate(outputs):
-    name = sample['name']
-    print(f'[{idx+1}/{len(outputs)}] Creating {name} ...')
+    for idx, sample in enumerate(outputs):
+        name = sample['name']
+        print(f'[{idx+1}/{len(outputs)}] Creating {name} ...')
 
-    images = sample['images'].unsqueeze(0).to(device)
-    images = v2.functional.resize(images, 320, interpolation=3, antialias=True).clamp(0, 1)
+        images = sample['images'].unsqueeze(0).to(device)
+        images = v2.functional.resize(images, 320, interpolation=3, antialias=True).clamp(0, 1)
 
-    if args.view == 4:
-        indices = torch.tensor([0, 2, 4, 5]).long().to(device)
-        images = images[:, indices]
-        input_cameras = input_cameras[:, indices]
+        if args.view == 4:
+            indices = torch.tensor([0, 2, 4, 5]).long().to(device)
+            images = images[:, indices]
+            input_cameras = input_cameras[:, indices]
 
-    with torch.no_grad():
-        # get triplane
-        planes = model.forward_planes(images, input_cameras)
-
-        # get mesh
-        mesh_path_idx = os.path.join(mesh_path, f'{name}.obj')
-
-        mesh_out = model.extract_mesh(
-            planes,
-            use_texture_map=args.export_texmap,
-            **infer_config,
-        )
-        if args.export_texmap:
-            vertices, faces, uvs, mesh_tex_idx, tex_map = mesh_out
-            save_obj_with_mtl(
-                vertices.data.cpu().numpy(),
-                uvs.data.cpu().numpy(),
-                faces.data.cpu().numpy(),
-                mesh_tex_idx.data.cpu().numpy(),
-                tex_map.permute(1, 2, 0).data.cpu().numpy(),
-                mesh_path_idx,
-            )
-        else:
-            vertices, faces, vertex_colors = mesh_out
-            save_obj(vertices, faces, vertex_colors, mesh_path_idx)
-        print(f"Mesh saved to {mesh_path_idx}")
-
-        # get video
-        if args.save_video:
-            video_path_idx = os.path.join(video_path, f'{name}.mp4')
-            render_size = infer_config.render_resolution
-            render_cameras = get_render_cameras(
-                batch_size=1, 
-                M=120, 
-                radius=args.distance, 
-                elevation=20.0,
-                is_flexicubes=IS_FLEXICUBES,
-            ).to(device)
+        with torch.no_grad():
+            # get triplane
+            planes = model.forward_planes(images, input_cameras)
             
-            frames = render_frames(
-                model, 
-                planes, 
-                render_cameras=render_cameras, 
-                render_size=render_size, 
-                chunk_size=chunk_size, 
-                is_flexicubes=IS_FLEXICUBES,
-            )
+            k = (3, 3)
+            sigma_c = 10
+            sigma_r = (10, 10)
+        
+            freeplanes = bilateral_blur(
+                planes.transpose(0, 2).squeeze(), k, sigma_c, sigma_r
+            ).unsqueeze(2).transpose(0, 2)
+            print(f"Created freeplanes with kernel={k}, sigma_c={sigma_c} and sigma_r={sigma_r}")
 
-            save_video(
-                frames,
-                video_path_idx,
-                fps=30,
+            # get mesh
+            mesh_path_idx = os.path.join(mesh_path, f'{name}.obj')
+
+            mesh_out = model.extract_mesh(
+                planes,
+                use_texture_map=args.export_texmap,
+                freeplanes=freeplanes,
+                **infer_config,
             )
-            print(f"Video saved to {video_path_idx}")
+            if args.export_texmap:
+                vertices, faces, uvs, mesh_tex_idx, tex_map = mesh_out
+                save_obj_with_mtl(
+                    vertices.data.cpu().numpy(),
+                    uvs.data.cpu().numpy(),
+                    faces.data.cpu().numpy(),
+                    mesh_tex_idx.data.cpu().numpy(),
+                    tex_map.permute(1, 2, 0).data.cpu().numpy(),
+                    mesh_path_idx,
+                )
+            else:
+                vertices, faces, vertex_colors = mesh_out
+                save_obj(vertices, faces, vertex_colors, mesh_path_idx)
+            print(f"Mesh saved to {mesh_path_idx}")
+
+            # get video
+            if args.save_video:
+                video_path_idx = os.path.join(video_path, f'{name}.mp4')
+                render_size = infer_config.render_resolution
+                render_cameras = get_render_cameras(
+                    batch_size=1, 
+                    M=120, 
+                    radius=args.distance, 
+                    elevation=20.0,
+                    is_flexicubes=IS_FLEXICUBES,
+                ).to(device)
+                
+                frames = render_frames(
+                    model, 
+                    planes, 
+                    render_cameras=render_cameras, 
+                    render_size=render_size, 
+                    chunk_size=chunk_size, 
+                    is_flexicubes=IS_FLEXICUBES,
+                )
+
+                save_video(
+                    frames,
+                    video_path_idx,
+                    fps=30,
+                )
+                print(f"Video saved to {video_path_idx}")
